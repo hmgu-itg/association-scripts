@@ -1,0 +1,6 @@
+args <- commandArgs(trailingOnly = TRUE)
+library(data.table)
+d=fread(args[1])
+lambda=round(median(qchisq(d$p_score,df=1,lower.tail=FALSE),na.rm=TRUE)/qchisq(0.5,1),3)
+d$gc_score=pchisq(qchisq(d$p_score,1, lower.tail=F)/lambda,1, lower.tail=F)
+write.table(d, paste(args[1], ".gccorrect", sep=""), row.names=F, quote=F, col.names=T, sep="\t")

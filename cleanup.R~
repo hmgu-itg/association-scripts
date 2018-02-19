@@ -1,0 +1,9 @@
+library(data.table)
+d=fread("peakdata")
+t=table(d$gc_score)
+u=rbind(-log(as.numeric(names(sort(t[t>10], decreasing=T)))), t[t>10])
+exclusion=as.numeric(colnames(u[,u[1,]>1]))
+
+d=d[!(d$gc_score %in% exclusion),]
+
+write.table(d, "peakdata.cleaned", sep=" ", row.names=F, col.names=T, quote=F)

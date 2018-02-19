@@ -1,0 +1,212 @@
+#!/bin/bash
+
+# DATA PATHS
+phenotype=$1
+pheno_path="/nfs/t144_helic/Phenotypes/Arthur"
+manol_matrix_bfile="/lustre/scratch114/projects/helic/assoc_freeze_Summer2015/matrices/ldprune_indep_50_5_2.hwe.1e-5/output/4x1xseq.nomono.pruned.hwe.matrix.cXX.txt"
+manol_input_bfiles="/lustre/scratch114/projects/helic/assoc_freeze_Summer2015/input/assoc_chunks"
+
+poma_matrix_bfile="/lustre/scratch114/projects/helic/assoc_freeze_Summer2015_POMAK/matrices/ldprune_indep_50_5_2.hwe.1e-5/output/1xseq.nomono.pruned.hwe.matrix.cXX.txt"
+poma_input_bfiles="/lustre/scratch114/projects/helic/assoc_freeze_Summer2015_POMAK/input/assoc_chunks"
+
+# PROGRAM PATHS
+plink="/software/team144/plink-versions/beta3v/plink"
+
+# Build phenotype file
+echo "Building phenotype..."
+
+basehadir="/lustre/scratch114/projects/helic/assoc_freeze_Summer2015/output/ldprune_indep_50_5_2.hwe.1e-5/custom_transforms/$phenotype"
+basehpdir="/lustre/scratch114/projects/helic/assoc_freeze_Summer2015_POMAK/output/ldprune_indep_50_5_2.hwe.1e-5/custom_transforms/$phenotype"
+mkdir -p $basehadir/input
+mkdir -p $basehpdir/input
+
+tail -n+2 ${pheno_path}/HA_newtransforms/$phenotype/Residuals-Plots/${phenotype}_stand_residuals.txt | cut -f1,3 | awk 'BEGIN{OFS="\t"}{print $1,$1,$2}' > $basehadir/HA.phenodata
+tail -n+2 ${pheno_path}/HP_newtransforms/$phenotype/Residuals-Plots/${phenotype}_stand_residuals.txt | cut -f1,3 | awk 'BEGIN{OFS="\t"}{print $1,$1,$2}' > $basehpdir/HP.phenodata
+
+
+# Add phenotype data to input data
+echo "STARTING MANOLIS"
+echo "Building input dataset..."
+cd $basehadir
+for file in `ls $manol_input_bfiles/*.fam | sed 's/.fam//'`
+do
+    file=$(basename $file)
+    echo $plink --memory 2000 --bfile $manol_input_bfiles/$file --pheno $basehadir/HA.phenodata --out $basehadir/input/$file --make-bed
+done | ~/array 2g rph > phenotypize.command
+chmod +x phenotypize.command
+jobid=$(./phenotypize.command | sed 's/Job <//;s/> is.*//')
+sleep 10
+echo "Watching for preparation job array $jobid to finish..."
+njobs=$(bjobs | grep -w $jobid | wc -l)
+
+while [ $njobs -gt 0  ]
+do
+    njobs=$(bjobs | grep -w $jobid | wc -l)
+    sleep 5
+done
+
+xitstatus=$(grep xited rph*.o)
+xited=$(grep xited rph*.o | wc -l)
+if [ $xited -gt 0 ]
+then
+    echo "Some phenotyping jobs have failed:"
+    echo $xitstatus
+    exit
+fi
+rm rph*[eo]
+
+cd $basehpdir
+
+# Same for POMAK
+echo "Building input dataset POMAK..."
+for file in `ls $poma_input_bfiles/*.fam | sed 's/.fam//'`
+do
+    file=$(basename $file)
+    echo $plink --memory 2000 --bfile $poma_input_bfiles/$file --pheno $basehpdir/HP.phenodata --out $basehpdir/input/$file --make-bed
+done | ~/array 2g rph > phenotypize.command
+chmod +x phenotypize.command
+jobid=$(./phenotypize.command | sed 's/Job <//;s/> is.*//')
+sleep 10
+echo "Watching for preparation job array $jobid to finish..."
+njobs=$(bjobs | grep -w $jobid | wc -l)
+
+while [ $njobs -gt 0  ]
+do
+    njobs=$(bjobs | grep -w $jobid | wc -l)
+    sleep 5
+done
+
+xitstatus=$(grep xited rph*.o)
+xited=$(grep xited rph*.o | wc -l)
+if [ $xited -gt 0 ]
+then
+    echo "Some phenotyping jobs have failed:"
+    echo $xitstatus
+    exit
+fi
+rm rph*[eo]
+
+
+# Associate
+# Here just generate the GEMMA jobs!
+cd $basehadir
+echo "Associating..."
+for i in `ls input/*.fam | sed 's/input.//;s/.fam//'`
+do
+    echo /nfs/team144/it3/Software_farm3/gemma-0.94/bin/gemma -bfile input/$i -n 1 -notsnp  -maf 0  -miss 1  -km 1 -k $manol_matrix_bfile -lmm 4 -o $i
+done | ~/array 5g asc > assoc.command
+chmod +x assoc.command
+jobid=$(./assoc.command | sed 's/Job <//;s/> is.*//')
+
+echo "Watching for association job array $jobid to finish..."
+sleep 5
+njobs=$(bjobs | grep -w $jobid | wc -l)
+
+while [ $njobs -gt 0  ]
+do
+    njobs=$(bjobs | grep -w $jobid | wc -l)
+    sleep 5
+done
+
+xitstatus=$(grep xited asc*.o )
+xited=$(grep xited asc*.o | wc -l)
+if [ $xited -gt 0 ]
+then
+    echo "Some phenotyping jobs have failed:"
+    echo $xitstatus
+    exit
+fi
+rm asc*[eo]
+
+echo "Concatenating..."
+
+head -n1 $(ls output/*.assoc.txt | head -n1) > MANOLIS.$phenotype.assoc.txt
+for i in {1..22}
+do
+    for j in `ls output/$i.*.assoc.txt`
+    do
+	tail -n+2 $j
+    done | sort -k3,3n
+done >> MANOLIS.$phenotype.assoc.txt
+
+echo "Building graphs.."
+export CF9_R_LIBS="/software/team144/cf9/lib/my_R"
+hsub 10g -I -q yesterday ~/man_qq_annotate --chr-col chr --pos-col ps --auto-label --pval-col p_score --title "MANOLIS-$phenotype" --sig-thresh 1e-08 --sig-thresh-line 1e-08 MANOLIS.$phenotype.assoc.txt MANOLIS.$phenotype.assoc
+
+awk '$7>0.001' MANOLIS.$phenotype.assoc.txt > MANOLIS.$phenotype.maf0.001.assoc.txt
+gzip MANOLIS.$phenotype.assoc.txt
+
+hsub 10g -I -q yesterday ~/man_qq_annotate --chr-col chr --pos-col ps --auto-label --pval-col p_score --title "MANOLIS-$phenotype-MAF0.001" --sig-thresh 1e-08 --sig-thresh-line 1e-08 MANOLIS.$phenotype.maf0.001.assoc.txt MANOLIS.$phenotype.maf0.001.assoc
+
+rm -r input output
+
+
+gzip MANOLIS.$phenotype.maf0.001.assoc.txt
+
+echo "gc-correcting filtered plot"
+~/association-scripts/gccorrect.sh MANOLIS.$phenotype.maf0.001.assoc.txt.gz
+
+echo "Finished MANOLIS"
+
+cd -
+cd $basehpdir
+echo "Associating..."
+for i in `ls input/*.fam | sed 's/input.//;s/.fam//'`
+do
+    echo /nfs/team144/it3/Software_farm3/gemma-0.94/bin/gemma -bfile input/$i -n 1 -notsnp  -maf 0  -miss 1  -km 1 -k $poma_matrix_bfile -lmm 4 -o $i
+done | ~/array 5g asc > assoc.command
+chmod +x assoc.command
+jobid=$(./assoc.command | sed 's/Job <//;s/> is.*//')
+
+echo "Watching for association job array $jobid to finish..."
+sleep 5
+njobs=$(bjobs | grep -w $jobid | wc -l)
+
+while [ $njobs -gt 0  ]
+do
+    njobs=$(bjobs | grep -w $jobid | wc -l)
+    sleep 5
+done
+
+xitstatus=$(grep xited asc*.o )
+xited=$(grep xited asc*.o | wc -l)
+if [ $xited -gt 0 ]
+then
+    echo "Some phenotyping jobs have failed:"
+    echo $xitstatus
+    exit
+fi
+rm asc*[eo]
+
+echo "Concatenating..."
+
+head -n1 $(ls output/*.assoc.txt | head -n1) > POMAK.$phenotype.assoc.txt
+for i in {1..22}
+do
+    for j in `ls output/$i.*.assoc.txt`
+    do
+	tail -n+2 $j
+    done | sort -k3,3n
+done >> POMAK.$phenotype.assoc.txt
+
+echo "Building graphs.."
+export CF9_R_LIBS="/software/team144/cf9/lib/my_R"
+hsub 10g -I -q yesterday ~/man_qq_annotate --chr-col chr --pos-col ps --auto-label --pval-col p_score --title "POMAK-$phenotype" --sig-thresh 1e-08 --sig-thresh-line 1e-08 POMAK.$phenotype.assoc.txt POMAK.$phenotype.assoc
+
+awk '$7>0.001' POMAK.$phenotype.assoc.txt > POMAK.$phenotype.maf0.001.assoc.txt
+gzip POMAK.$phenotype.assoc.txt
+
+hsub 10g -I -q yesterday ~/man_qq_annotate --chr-col chr --pos-col ps --auto-label --pval-col p_score --title "POMAK-$phenotype-MAF0.001" --sig-thresh 1e-08 --sig-thresh-line 1e-08 POMAK.$phenotype.maf0.001.assoc.txt POMAK.$phenotype.maf0.001.assoc
+
+rm -r input output
+
+
+gzip POMAK.$phenotype.maf0.001.assoc.txt
+
+echo "gc-correcting filtered plot"
+/nfs/users/nfs_a/ag15/association-scripts/gccorrect.sh POMAK.$phenotype.maf0.001.assoc.txt.gz
+
+
+echo "Finished POMAK"
+
+cd -
