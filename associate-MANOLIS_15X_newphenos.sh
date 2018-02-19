@@ -6,11 +6,26 @@
 cohort=Pomak
 cohort_code=HP
 phenotype=$1
-pheno_path=/lustre/scratch115/realdata/mdt0/projects/t144_helic_15x/analysis/HP/phenotypes/correctnames_andmissing
+
+cohort_code=$2
+if [[ $cohort_code = "HP" ]]; then
+    cohort=Pomak
+    pheno_path=/lustre/scratch115/realdata/mdt0/projects/t144_helic_15x/analysis/HP/phenotypes/correctnames_andmissing
+    matrix_bfile=/lustre/scratch115/projects/t144_helic_15x/analysis/HP/relmat/output/merged.POMAK_15X.filtered.MAF.0.05.matrix.cXX.txt
+elif [[ $cohort_code = "HA" ]]; then
+    cohort=MANOLIS
+    pheno_path=/lustre/scratch115/projects/t144_helic_15x/analysis/HA/phenotypes/correct_names.andmissing
+    matrix_bfile=/lustre/scratch115/projects/t144_helic_15x/analysis/HA/relmat/input/VCF.MAF.0.05/hwe.1e-5/output/merge.cXX.txt
+else
+    echo "Invalid cohort code!"
+    exit
+fi
+
+#pheno_path=/lustre/scratch115/realdata/mdt0/projects/t144_helic_15x/analysis/HP/phenotypes/correctnames_andmissing
 #pheno_path="/lustre/scratch115/projects/t144_helic_15x/analysis/HA/phenotypes/correct_names.andmissing"
 #pheno_path="/nfs/t144_helic/kk9/15x_transformed_phenos"
 #matrix_bfile="/lustre/scratch114/projects/helic/checkpoints/total_grm/ldpruned.hwe.1-11grm.12-22assoc/tg/gwas.mat/all.gwas.hwe.phenotg"
-matrix_bfile=$2
+#matrix_bfile=$2
 input_bfiles="/lustre/scratch115/projects/t144_helic_15x/analysis/${cohort_code}/single_point/input/chunks"
 
 # PROGRAM PATHS
